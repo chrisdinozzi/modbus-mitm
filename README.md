@@ -1,4 +1,4 @@
-# Modbus MITM Hijack Attack
+# Modbus MITM/AiTM Packet Injection Attack
 1. Spoof ARP
 2. Intercept Modbus Packet
 3. Change Values
