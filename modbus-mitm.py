@@ -11,7 +11,17 @@ Requires: scapy, root privileges, and IPv4 forwarding support
 
 Usage:
   sudo python3 modbus_mitm_capture.py -i eth0 --victim 192.168.1.50 --target 192.168.1.10
-"""
+
+  
+Features to add:
+    - interactive mode: open prompt when the first modbus packet hits us, and allow user to select exactly what function and value they want to send
+    - more output/logging to help debug + improve user experience
+    - a nice banner, ofc
+    - rename 'victim' and 'target' to 'client' and 'server'
+    - add short flags
+    - complete other TODOs
+  
+  """
 
 import argparse
 import struct
@@ -134,10 +144,7 @@ def main():
 
     print("This tool actively repositions traffic via ARP spoofing.")
     print(f"Target scope: victim={args.victim}  target={args.target}  iface={args.interface}")
-    # confirm = input("Type YES to confirm you own/are authorized to test this network: ")
-    # if confirm.strip() != "YES":
-    #     print("Confirmation not received, aborting.")
-    #     sys.exit(1)
+
 
     conf.iface = args.interface
     own_mac = get_if_hwaddr(args.interface)
