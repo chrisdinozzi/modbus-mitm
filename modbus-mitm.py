@@ -39,6 +39,8 @@ except ImportError:
     print("scapy is required: pip install scapy --break-system-packages", file=sys.stderr)
     sys.exit(1)
 
+VERSION="0.1"
+
 def log_line(msg, log_file=None):
     line = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {msg}"
     print(line)
@@ -130,6 +132,14 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
     # print(npkt.show(dump=True))
     sendp(npkt,loop=0,inter=0.2)
 
+def banner():
+    print(f'''                                                                                                 
+██▄  ▄██  ▄▄▄  ▄▄▄▄  ▄▄▄▄  ▄▄ ▄▄  ▄▄▄▄   █████▄  ▄▄▄   ▄▄▄▄ ▄▄ ▄▄ ▄▄▄▄▄ ▄▄▄▄▄▄   ██ ▄▄  ▄▄   ▄▄ ▄▄▄▄▄  ▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄▄▄  
+██ ▀▀ ██ ██▀██ ██▀██ ██▄██ ██ ██ ███▄▄   ██▄▄█▀ ██▀██ ██▀▀▀ ██▄█▀ ██▄▄    ██     ██ ███▄██   ██ ██▄▄  ██▀▀▀   ██  ██▀██ ██▄█▄ 
+██    ██ ▀███▀ ████▀ ██▄█▀ ▀███▀ ▄▄██▀   ██     ██▀██ ▀████ ██ ██ ██▄▄▄   ██     ██ ██ ▀██ ▄▄█▀ ██▄▄▄ ▀████   ██  ▀███▀ ██ ██ 
+
+by cdino, v{VERSION}                                                                                                                         
+''')
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -141,7 +151,9 @@ def main():
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
 
+    banner()
     print("This tool actively repositions traffic via ARP spoofing.")
+    time.sleep(1)
     print(f"Target scope: victim={args.victim}  target={args.target}  iface={args.interface}")
 
     log_file = open(args.log, "a") if args.log else None
