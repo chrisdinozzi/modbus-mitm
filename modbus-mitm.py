@@ -20,7 +20,6 @@ Features to add:
     - rename 'victim' and 'target' to 'client' and 'server'
     - add short flags
     - complete other TODOs
-  
   """
 
 import argparse
@@ -48,7 +47,7 @@ def log_line(msg, log_file=None):
         log_file.flush()
 
 def get_mac(ip, iface, timeout=3):
-    ans = sr1(ARP(op=1, pdst=ip), timeout=timeout, iface=iface, verbose=0)
+    ans = sr1(ARP(op=1, pdst=ip), timeout=timeout,  verbose=0)
     return ans[ARP].hwsrc if ans else None
 
 
@@ -135,9 +134,9 @@ def handle_packet(pkt, port, log_file,mappings):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-i", "--interface", required=True, help="Interface to use")
-    ap.add_argument("--victim", required=True, help="IP of the Modbus master (client)")
-    ap.add_argument("--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
-    ap.add_argument("--port", type=int, default=502, help="Modbus/TCP port (default 502)")
+    ap.add_argument("-v","--victim", required=True, help="IP of the Modbus master (client)")
+    ap.add_argument("-t","--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
+    ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
@@ -145,12 +144,15 @@ def main():
     print("This tool actively repositions traffic via ARP spoofing.")
     print(f"Target scope: victim={args.victim}  target={args.target}  iface={args.interface}")
 
-
-    conf.iface = args.interface
-    own_mac = get_if_hwaddr(args.interface)
-
     log_file = open(args.log, "a") if args.log else None
     stop_event = threading.Event()
+
+    try:
+        conf.iface = args.interface
+        own_mac = get_if_hwaddr(args.interface) # interface mac address
+    except Exception as e:
+        log_line("[-] Error: "+str(e),log_file)
+        exit(1)
 
     victim_mac = get_mac(args.victim, args.interface)
     target_mac = get_mac(args.target, args.interface)
