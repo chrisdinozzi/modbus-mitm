@@ -6,19 +6,17 @@ Modbus/TCP MITM capture tool using ARP spoofing to reposition traffic
 between a Modbus master and slave onto this host, then decoding the
 Modbus/TCP traffic that flows through.
 
-Requires: scapy, root privileges, and IPv4 forwarding support
+Requires: scapy and root privileges
   pip install scapy --break-system-packages
 
 Usage:
-  sudo python3 modbus_mitm_capture.py -i eth0 --victim 192.168.1.50 --target 192.168.1.10
+  sudo python3 mopi.py -i eth0 -v 192.168.1.50 -t 192.168.1.10
 
   
 Features to add:
     - interactive mode: open prompt when the first modbus packet hits us, and allow user to select exactly what function and value they want to send
     - more output/logging to help debug + improve user experience
-    - a nice banner, ofc
     - rename 'victim' and 'target' to 'client' and 'server'
-    - add short flags
     - complete other TODOs
   """
 
