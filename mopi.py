@@ -60,15 +60,6 @@ MODBUS_FUNCTION_CODES = {
 
 }
 
-MODBUS_WRITE_REGISTER_FUNCTION_CODES = [
-    0x05,0x06
-]
-
-MODBUS_READ_REGISTER_FUNCTION_CODES = [
-    0x03,0x04
-]
-
-MODBUS_REGISTER_FUNCTION_CODES = MODBUS_WRITE_REGISTER_FUNCTION_CODES + MODBUS_READ_REGISTER_FUNCTION_CODES
 
 def log_line(msg, log_file=None):
     line = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {msg}"
@@ -142,27 +133,20 @@ def is_retransmission(pkt):
 
 def interactive_packet_craft():
     p=""
+    print("1) Read Coils")
+    print("2) Read Discrete Inputs")
+    print("3) Read Holding Registers")
+    print("4) Read Input Registers")
+    print("5) Write Single Coil")
+    print("6) Write Single Register")
+    print("10) Write Multiple Coils")
+    print("16) Write Multiple Register")
 
-    print("3) Read Register")
-    print("6) Write Register")
     func_choice = int(input("Select your function: "))
     print(func_choice)
     print("Selected: ",MODBUS_FUNCTION_CODES.get(func_choice))
 
-    # return build_pdu(func_choice)
     return(build_pdu(func_choice))
-    exit(99)
-
-    # if func_choice in MODBUS_REGISTER_FUNCTION_CODES:
-    #     print("Register Function Selected")
-    #     reg_choice = int(input("Enter Target Register: "))
-    #     print("Register Selected: ",reg_choice)
-    #     if func_choice in MODBUS_READ_REGISTER_FUNCTION_CODES:
-    #         print("Read Register Function Selected")
-    #     elif func_choice in MODBUS_WRITE_REGISTER_FUNCTION_CODES:
-    #                 print("Write Register Function Selected")
-    #                 value_choice = int(input("Enter Target Value: "))
-    #                 print("Value Entered: ",value_choice)
 
 
 def build_pdu(func_code: int):
