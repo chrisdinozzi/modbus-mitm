@@ -21,8 +21,6 @@ Features to add:
   """
 
 import argparse
-import struct
-import subprocess
 import sys
 import threading
 import time
