@@ -11,13 +11,6 @@ Requires: scapy and root privileges
 
 Usage:
   sudo python3 mopi.py -i eth0 -v 192.168.1.50 -t 192.168.1.10
-
-Features to add:
-    - more output/logging to help debug + improve user experience
-    - rename 'victim' and 'target' to 'client' and 'server'
-    - complete other TODOs
-    - properly test interactive mode
-    - add ability to allow user to input config file which tells script how to modify every function type
   """
 
 import argparse
@@ -29,7 +22,7 @@ from datetime import datetime, timezone
 
 try:
     from scapy.all import (
-        sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,srp1,sr
+        sniff, sr1, ARP, Ether, TCP, IP, conf, get_if_hwaddr,sendp,srp1,sr
     )
     from scapy.contrib.modbus import (
     ModbusADURequest,
@@ -68,7 +61,7 @@ def log_line(msg, log_file=None):
         log_file.write(line + "\n")
         log_file.flush()
 
-def get_mac(ip, iface, timeout=3):
+def get_mac(ip, iface, timeout=3): #TODO: remove iface parameter
     ans = sr1(ARP(op=1, pdst=ip), timeout=timeout,  verbose=0)
     return ans[ARP].hwsrc if ans else None
 
@@ -360,7 +353,6 @@ def main():
         stop_event.set()
         spoof_thread.join(timeout=2)
         restore_arp(args.interface, args.victim, victim_mac, args.target, target_mac)
-        # set_ip_forwarding(False)
         if log_file:
             log_file.close()
 

@@ -29,7 +29,12 @@ The user will be prompted to craft their packet via an interactive process.
 
   
 ## TODO
- - more output/logging to help debug + improve user experience
- - rename 'victim' and 'target' to 'client' and 'server'
- - complete other TODOs
- - and more try/except logic, especially for interactive packet creation
+- more output/logging to help debug + improve user experience
+- rename 'victim' and 'target' to 'client' and 'server'
+- complete other TODOs
+- add more try/except logic, especially for interactive packet creation
+- add more modes like:
+  - auto OR register values agaisnt 1
+  - auto flip coil values
+  - random
+  - config file
