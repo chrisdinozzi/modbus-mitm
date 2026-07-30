@@ -206,6 +206,7 @@ def main():
     ap.add_argument("-t","--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
     ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
+    ap.add_argument("--interactive", help="Craft your own Modbus request")
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
 
