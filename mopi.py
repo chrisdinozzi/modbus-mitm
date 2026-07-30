@@ -287,6 +287,8 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     else:
         print("No response — device may be down, dropping packets, or filtering the request")
 
+        #IS IT A PACKET LENGTH ISSUE???????????
+
 def banner():
     print(f'''                                                                                                 
 ██▄  ▄██  ▄▄▄  ▄▄▄▄  ▄▄▄▄  ▄▄ ▄▄  ▄▄▄▄   █████▄  ▄▄▄   ▄▄▄▄ ▄▄ ▄▄ ▄▄▄▄▄ ▄▄▄▄▄▄   ██ ▄▄  ▄▄   ▄▄ ▄▄▄▄▄  ▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄▄▄  
