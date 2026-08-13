@@ -1,3 +1,5 @@
+**Disclaimer:** At the moment, this is not a fully fledged tool and is only really useful for demos. It's a WIP.
+
 # Modbus Packet Injection (MoPI) 
 Modbus MITM/AiTM Packet Injection Attack
 1. Spoof ARP
@@ -7,7 +9,6 @@ Modbus MITM/AiTM Packet Injection Attack
 5. Profit
 
 Requires: scapy, root privileges
-
 `pip install scapy --break-system-packages`
 
 ## Usage
@@ -24,12 +25,14 @@ Packet Injection mode allows the user to craft a Modbus packet of their own, whi
 `sudo python3 mopi.py -i eth0 --victim 192.168.1.50 --target 192.168.1.10 --mode injetion`
 
 The user will be prompted to craft their packet via an interactive process.
+If the packet the user crafts uses the same function as the modbus traffic being hijacked, it will work pretty smooth. If it's a different function, it's likely the client who sent the request will crash or spout an error, since it gets back an unexpected response.
 
 ### Flip
-TODO
+Flip mode just takes the register value of a 'Write Single Register' (0x06) and bit flips the value.
+
 `sudo python3 mopi.py -i eth0 --victim 192.168.1.50 --target 192.168.1.10 --mode flip`
 
-
+Currently **only supports function code 0x06**.
   
 ## TODO
 - more output/logging to help debug + improve user experience
