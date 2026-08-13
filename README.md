@@ -37,7 +37,8 @@ TODO
 - complete other TODOs
 - add more try/except logic, especially for interactive packet creation
 - add more modes like:
-  - auto OR register values agaisnt 1
-  - auto flip coil values
   - random
   - config file
+
+Current issue with modifying packets is as follows:
+The packet is sent from the client, to us, then modified, then sent to the server. The response receieved from the server is of course a response to the modified request. We can't just send that back to the client. We need a way of crafting a fake response.
