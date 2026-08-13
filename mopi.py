@@ -42,7 +42,7 @@ except ImportError:
     print("scapy is required: pip install scapy --break-system-packages", file=sys.stderr)
     sys.exit(1)
 
-VERSION="0.2"
+VERSION="0.4"
 
 MODBUS_FUNCTION_CODES = {
     0x01: "Read Coils",                 #1
