@@ -1,6 +1,6 @@
 **Disclaimer:** At the moment, this is not a fully fledged tool and is only really useful for demos. It's a WIP.
 
-# Modbus Packet Injection (MoPI) 
+# Modbus Packet Injector (MoPI) 
 Modbus MITM/AiTM Packet Injection Attack
 1. Spoof ARP
 2. Intercept Modbus Packet
