@@ -1,4 +1,4 @@
-**Disclaimer:** At the moment, this is not a fully fledged tool and is only really useful for demos. It's a WIP.
+**Disclaimer:** At the moment, this is not a fully fledged tool and is only really useful for demos. It's a WIP. ALSO, only run this tool on networks you own or have permission to screw with.
 
 # Modbus Packet Injector (MoPI) 
 Modbus MITM/AiTM Packet Injection Attack
@@ -12,7 +12,7 @@ Requires: scapy, root privileges
 `pip install scapy --break-system-packages`
 
 ## Usage
-MoPI has 3 modes: packet injection, packet sniffig, and flip
+MoPI has 3 modes: packet injection, packet sniffing, and bit flip
 
 ### Passive Sniffing
 Passive Sniffing is the default mode. The program will ARP poisin the targets and sniff for Modbus traffic going across the wire, presenting this back to the user.
@@ -38,3 +38,6 @@ Currently **only supports function code 0x06**.
 - more output/logging to help debug + improve user experience
 - complete other TODOs
 - add more try/except logic, especially for interactive packet creation
+- tighten up packet injection to reduce changes on crashing client
+- add other functions to packet injection
+- develop trickster mode to reply original value to operator (stuxnet style)
