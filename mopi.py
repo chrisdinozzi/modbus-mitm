@@ -360,13 +360,14 @@ def handle_packet(pkt, port, log_file,mappings,own_mac,mode,crafted_pkt):
                 modified_modbus_requests[pkt[ModbusADURequest].transId] = ModifiedModbusRequest(pkt)
                 pkt = stripped / modbus_payload
                 print("\nCrafted Packet: ")
-                print(pkt.show(dump=True))
+                print(pkt[ModbusADURequest].show(dump=True))
 
 
             case "passive": # just sniffing traffic
                 print("\n-> Request Recieved:")
-                print_modbus_payload(pkt[ModbusADURequest])    
                 print("-"*16)
+                print_modbus_payload(pkt[ModbusADURequest])    
+                
 
             case "flip": #bit flip register values
                 if pkt[ModbusADURequest].funcCode != 6:
